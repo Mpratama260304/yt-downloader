@@ -1,6 +1,6 @@
-# 🎬 YouTube Downloader v5.3.0 - Streaming Fix Update
+# 🎬 YouTube Downloader v5.4.0 - Audio/Video Fix Update
 
-A modern, production-ready web application for downloading YouTube videos using yt-dlp. Features **pure streaming proxy** (no temp file wait), **keep-alive heartbeats**, **proxy rotation**, and **auto-cookies** optimized for serverless environments.
+A modern, production-ready web application for downloading YouTube videos using yt-dlp. Features **reliable audio downloads (MP3/M4A)**, **streaming proxy**, **auto-cookies**, and is optimized for serverless environments.
 
 **🚀 Designed for Phala Cloud, Vercel, and VPS platforms with strict timeout limits**
 
@@ -12,67 +12,74 @@ A modern, production-ready web application for downloading YouTube videos using 
 ![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker)
 ![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
 
-## ✨ What's New in v5.3.0
+## ✨ What's New in v5.4.0
 
-### 🚀 Streaming Fix Update (408 Timeout Final Fix)
-This update addresses persistent **408 Request Timeout** errors that occurred even after v5.2.0 fixes.
+### 🎵 Audio/Video Fix Update
+This update fixes **"Video file was corrupted"** errors for audio formats (MP3/M4A) and addresses progress getting stuck at 98%.
 
-#### Error Being Fixed
+#### Errors Being Fixed
 ```
-POST https://ytvidsave.online/api/download 408 (Request Timeout)
-Download error: Error: Download timed out. Try a lower quality format.
+Download error: Video file was corrupted. Try a different format.
+Progress stuck at 98% even when files downloaded successfully
+Recommended video formats (1080p, 720p with merge) corrupting
 ```
 
 #### Root Cause Analysis
-The previous approach waited for the full file to download before streaming to the client. On Phala Cloud (~60-120s gateway timeout), this caused 408 errors for any video that took longer than the gateway timeout.
+The v5.3.0 streaming approach (`yt-dlp -o -` output to stdout) **doesn't work with `--extract-audio`**. When using `-x/--extract-audio`, yt-dlp must write to a file, not stdout.
 
-#### Solution: Pure Streaming
+#### Solution: Temp File for Audio
 ```
-                    OLD (v5.2.0)                              NEW (v5.3.0)
+                    v5.3.0 (Streaming)                       v5.4.0 (Audio Fix)
                     
-   yt-dlp ──► temp file ──► wait ──► stream         yt-dlp stdout ─┬─► response (chunked)
-                  │                     │                           │
-                  └── could take 2min+ ─┘                           └── immediate streaming
-                         ▼                                                    ▼
-                     408 TIMEOUT                                          SUCCESS
+   yt-dlp -o - ──► stdout ──► response        yt-dlp ──► temp file ──► stream to response
+        │                                          │
+        └── Works for VIDEO only                   └── Works for AUDIO (requires -x flag)
+             ▼                                          ▼
+        AUDIO CORRUPT (0 bytes)                    AUDIO SUCCESS
 ```
 
-### Key Changes from v5.2.0
+### Key Changes from v5.3.0
 
-| Feature | v5.2.0 | v5.3.0 |
+| Feature | v5.3.0 | v5.4.0 |
 |---------|--------|--------|
-| Output Method | Temp file → stream | `stdout` → direct stream |
-| Keep-Alive | None | Heartbeat every 10s |
-| Transfer | Wait for complete | Chunked, immediate |
-| Proxy Support | None | Rotation via env/admin |
-| Cookies Cache | 60s | 120s |
-| Concurrent Fragments | 2 | 1 (stability) |
-| Timeout | 120s | 300s (5min with streaming) |
+| Audio Download | Stdout streaming (broken) | Temp file + `--extract-audio` |
+| Audio Format Args | `-f bestaudio -o -` | `-f bestaudio -x --audio-format mp3/m4a -o file` |
+| Video Download | Stdout streaming | Temp file (more reliable) |
+| Progress Complete | Stuck at 98% | Force 100% on exit code 0 |
+| UI Audio Section | Mixed with video | **First section** with "Most Reliable" badge |
+| File Validation | 10KB min | 1KB for audio, 10KB for video |
 
 ### Implementation Details
 
 ```typescript
-// v5.3.0 Streaming approach
-const args = [url, '-f', format, '-o', '-']; // Output to stdout
-const proc = spawn('yt-dlp', args);
+// v5.4.0 Audio Download (FIXED)
+if (isAudioOnly) {
+  args.push(
+    '-f', 'bestaudio[ext=m4a]/bestaudio/best',
+    '--extract-audio',           // KEY: This flag requires file output
+    '--audio-format', 'mp3',     // Convert to mp3
+    '--audio-quality', '0',      // Best quality
+    '-o', tempFile,              // Output to temp file (not stdout!)
+  );
+}
 
-// Pipe stdout directly to response (no temp file!)
-const stream = new ReadableStream({
-  start(controller) {
-    proc.stdout.on('data', chunk => controller.enqueue(chunk));
-    proc.on('close', () => controller.close());
-  }
-});
-
-return new Response(stream, {
-  headers: {
-    'Transfer-Encoding': 'chunked',
-    'Connection': 'keep-alive',
+// Force progress to 100% on success
+proc.on('close', (code) => {
+  if (code === 0) {
+    updateProgress(progressId, { progress: 100, phase: 'complete' });
   }
 });
 ```
 
-## 🛡️ Proxy Support (NEW in v5.3.0)
+### UI Updates
+
+**Audio Formats Now Prioritized:**
+- Audio section appears **first** with green "Most Reliable" badge
+- Fast download indicator on audio formats
+- Video merge formats show warning about potential timeouts
+- Better tooltips explaining format differences
+
+## 🛡️ Proxy Support
 
 ### Configure Proxies
 

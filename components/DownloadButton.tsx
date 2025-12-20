@@ -26,11 +26,13 @@ interface DownloadProgress {
 /**
  * DownloadButton Component
  * 
- * v5.2.0 Features:
+ * v5.4.0 Features:
  * - Real-time progress via Server-Sent Events (SSE)
- * - Extended timeout handling (120s for serverless)
+ * - Extended timeout handling (240s for serverless)
  * - Better error messages for timeout/network issues
  * - Graceful fallback quality suggestions
+ * - Audio extraction support (MP3/M4A)
+ * - Progress fixed to reach 100% on completion
  */
 export default function DownloadButton({
   videoUrl,
@@ -81,12 +83,13 @@ export default function DownloadButton({
             suggestion: data.suggestion,
           }));
           eventSource.close();
-        } else if (data.phase === 'complete' && data.fileReady) {
-          // File is ready, SSE will be closed after download starts
+        } else if (data.phase === 'complete') {
+          // v5.4.0: Force progress to 100% on completion
           setDownloadProgress(prev => ({
             ...prev,
             progress: 100,
-            message: 'File ready, starting download...',
+            status: 'processing',
+            message: data.fileReady ? 'File ready, starting download...' : 'Download complete!',
           }));
         } else if (data.phase === 'verifying') {
           // v5.2.0: Lightweight verification phase
@@ -95,6 +98,14 @@ export default function DownloadButton({
             status: 'verifying',
             progress: data.progress || 95,
             message: data.message || 'Verifying download...',
+          }));
+        } else if (data.phase === 'extracting') {
+          // v5.4.0: Audio extraction phase
+          setDownloadProgress(prev => ({
+            ...prev,
+            status: 'processing',
+            progress: data.progress || 90,
+            message: data.message || 'Extracting audio...',
           }));
         } else if (data.phase === 'merging') {
           setDownloadProgress(prev => ({

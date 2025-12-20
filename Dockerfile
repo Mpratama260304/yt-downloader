@@ -1,24 +1,25 @@
 # ===========================================
-# Multi-stage Dockerfile for YouTube Downloader v5.3.0
+# Multi-stage Dockerfile for YouTube Downloader v5.4.0
 # ===========================================
 #
 # 🚀 PHALA CLOUD & VPS DEPLOYMENT READY
 #
-# v5.3.0 STREAMING FIX UPDATE (408 Timeout Final Fix):
-# - PURE STREAMING: Pipe yt-dlp stdout to response (no temp wait)
-# - KEEP-ALIVE: Heartbeat every 10s to prevent gateway timeout
-# - PROXY SUPPORT: Rotate proxies to bypass blocks
-# - NO TEMP FILE: Stream chunks directly as available
-# - Extended cookies cache to 120s for stability
+# v5.4.0 AUDIO/VIDEO FIX UPDATE:
+# - AUDIO FIX: Use temp file + --extract-audio for MP3/M4A
+#   (streaming to stdout doesn't work with -x/--extract-audio)
+# - VIDEO FIX: Proper merge format strings
+# - PROGRESS FIX: Force 100% on successful yt-dlp exit
+# - UI: Audio formats shown first with "Most Reliable" badge
+# - CORRUPTION FIX: Relaxed validation (1KB audio, 10KB video)
 #
-# Key Changes from v5.2.0:
-# - process.stdout -> response streaming
-# - Transfer-Encoding: chunked
-# - Connection: keep-alive headers
-# - Proxy rotation support
+# Key Changes from v5.3.0:
+# - Audio: Uses temp file output instead of stdout streaming
+# - Audio: --extract-audio --audio-format mp3/m4a --audio-quality 0
+# - Progress: Force 100% on proc.on('close') with code 0
+# - UI: Audio section prioritized, video formats have warnings
 #
-# Build: docker build -t yourusername/youtube-downloader:5.3.0 .
-# Push:  docker push yourusername/youtube-downloader:5.2.0
+# Build: docker build -t yourusername/youtube-downloader:5.4.0 .
+# Push:  docker push yourusername/youtube-downloader:5.4.0
 # Run:   docker-compose up -d
 #
 # ===========================================

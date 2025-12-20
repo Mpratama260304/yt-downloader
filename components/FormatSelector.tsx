@@ -1,8 +1,18 @@
 'use client';
 
+/**
+ * FormatSelector.tsx
+ * 
+ * v5.4.0 AUDIO/VIDEO FIX UPDATE:
+ * - Prioritizes audio formats (MP3/M4A) as most reliable
+ * - Shows "Recommended" badge on audio formats
+ * - Updated video format warnings
+ * - Better organization: Audio First, then Video
+ */
+
 import { useState, useMemo, forwardRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { FiVideo, FiMusic, FiFilter, FiCheck, FiAlertTriangle, FiInfo } from 'react-icons/fi';
+import { FiVideo, FiMusic, FiFilter, FiCheck, FiAlertTriangle, FiInfo, FiCheckCircle } from 'react-icons/fi';
 import type { VideoFormat } from '@/lib/types';
 import clsx from 'clsx';
 
@@ -41,11 +51,16 @@ export default function FormatSelector({ formats, onSelect, selectedFormat }: Fo
     }
   }, [formats, filter]);
 
-  // Separate recommended (combined) formats from individual formats
-  const recommendedFormats = filteredFormats.filter(
+  // v5.4.0: Separate formats into categories
+  // Audio formats are most reliable, prioritize them
+  const audioFormats = filteredFormats.filter(f => !f.hasVideo && f.hasAudio);
+  
+  // Video formats - recommended (merged) vs individual
+  const videoFormats = filteredFormats.filter(f => f.hasVideo);
+  const recommendedVideoFormats = videoFormats.filter(
     (f) => f.formatId.includes('+') || f.formatId.includes('best')
   );
-  const otherFormats = filteredFormats.filter(
+  const individualVideoFormats = videoFormats.filter(
     (f) => !f.formatId.includes('+') && !f.formatId.includes('best')
   );
 
@@ -83,26 +98,29 @@ export default function FormatSelector({ formats, onSelect, selectedFormat }: Fo
           </div>
         </div>
 
-        {/* Recommended formats */}
-        {recommendedFormats.length > 0 && (
+        {/* v5.4.0: Audio Formats FIRST - Most Reliable */}
+        {audioFormats.length > 0 && filter !== 'video' && (
           <div className="mb-6">
             <div className="flex items-center gap-2 mb-3">
-              <h4 className="text-sm font-semibold text-base-content/60 uppercase tracking-wide">
-                Recommended
+              <h4 className="text-sm font-semibold text-success uppercase tracking-wide flex items-center gap-1">
+                <FiCheckCircle className="w-4 h-4" />
+                Audio Formats
               </h4>
-              <div className="tooltip tooltip-right" data-tip="Best Quality may be slower & could timeout on serverless. Auto-fallback to 720p if issues occur.">
+              <span className="badge badge-sm badge-success">Most Reliable</span>
+              <div className="tooltip tooltip-right" data-tip="Audio downloads are faster and most reliable. Recommended for music.">
                 <FiInfo className="w-3.5 h-3.5 text-base-content/40 cursor-help" />
               </div>
             </div>
             <div className="grid gap-2">
               <AnimatePresence mode="popLayout">
-                {recommendedFormats.map((format, index) => (
+                {audioFormats.slice(0, 10).map((format, index) => (
                   <FormatCard
                     key={format.formatId}
                     format={format}
                     isSelected={selectedFormat?.formatId === format.formatId}
                     onClick={() => onSelect(format)}
                     index={index}
+                    isReliable={true}
                   />
                 ))}
               </AnimatePresence>
@@ -110,21 +128,51 @@ export default function FormatSelector({ formats, onSelect, selectedFormat }: Fo
           </div>
         )}
 
-        {/* Other formats */}
-        {otherFormats.length > 0 && (
-          <div>
-            <h4 className="text-sm font-semibold text-base-content/60 mb-3 uppercase tracking-wide">
-              Individual Formats
-            </h4>
-            <div className="grid gap-2 max-h-64 overflow-y-auto pr-2">
+        {/* Recommended video formats - with warning */}
+        {recommendedVideoFormats.length > 0 && filter !== 'audio' && (
+          <div className="mb-6">
+            <div className="flex items-center gap-2 mb-3">
+              <h4 className="text-sm font-semibold text-warning uppercase tracking-wide flex items-center gap-1">
+                <FiAlertTriangle className="w-4 h-4" />
+                Best Quality Video
+              </h4>
+              <div className="tooltip tooltip-right" data-tip="These merge video+audio, which may be slower and can timeout on serverless. Use Audio formats for reliability.">
+                <FiInfo className="w-3.5 h-3.5 text-base-content/40 cursor-help" />
+              </div>
+            </div>
+            <div className="grid gap-2">
               <AnimatePresence mode="popLayout">
-                {otherFormats.slice(0, 20).map((format, index) => (
+                {recommendedVideoFormats.map((format, index) => (
                   <FormatCard
                     key={format.formatId}
                     format={format}
                     isSelected={selectedFormat?.formatId === format.formatId}
                     onClick={() => onSelect(format)}
                     index={index}
+                    isReliable={false}
+                  />
+                ))}
+              </AnimatePresence>
+            </div>
+          </div>
+        )}
+
+        {/* Individual video formats */}
+        {individualVideoFormats.length > 0 && filter !== 'audio' && (
+          <div>
+            <h4 className="text-sm font-semibold text-base-content/60 mb-3 uppercase tracking-wide">
+              Individual Formats
+            </h4>
+            <div className="grid gap-2 max-h-64 overflow-y-auto pr-2">
+              <AnimatePresence mode="popLayout">
+                {individualVideoFormats.slice(0, 20).map((format, index) => (
+                  <FormatCard
+                    key={format.formatId}
+                    format={format}
+                    isSelected={selectedFormat?.formatId === format.formatId}
+                    onClick={() => onSelect(format)}
+                    index={index}
+                    isReliable={false}
                   />
                 ))}
               </AnimatePresence>
@@ -142,9 +190,9 @@ export default function FormatSelector({ formats, onSelect, selectedFormat }: Fo
           </motion.div>
         )}
 
-        {otherFormats.length > 20 && (
+        {individualVideoFormats.length > 20 && (
           <div className="text-center text-sm text-base-content/50 mt-4">
-            Showing top 20 formats out of {otherFormats.length}
+            Showing top 20 video formats out of {individualVideoFormats.length}
           </div>
         )}
       </div>
@@ -157,15 +205,18 @@ interface FormatCardProps {
   isSelected: boolean;
   onClick: () => void;
   index: number;
+  isReliable?: boolean;
 }
 
 /**
  * FormatCard component wrapped with forwardRef to fix React warning:
  * "Function components cannot be given refs" when used inside AnimatePresence
  * with mode="popLayout". The ref is forwarded to the motion.div element.
+ * 
+ * v5.4.0: Added isReliable prop to show reliability badge on audio formats
  */
 const FormatCard = forwardRef<HTMLDivElement, FormatCardProps>(
-  function FormatCard({ format, isSelected, onClick, index }, ref) {
+  function FormatCard({ format, isSelected, onClick, index, isReliable }, ref) {
     const size = formatFileSize(format.filesize || format.filesizeApprox);
     
     return (
@@ -212,9 +263,13 @@ const FormatCard = forwardRef<HTMLDivElement, FormatCardProps>(
         <div className="flex-1 min-w-0">
           <div className="font-medium truncate text-sm sm:text-base flex items-center gap-1">
             {format.quality}
-            {/* Warning for Best Quality formats - v5.2.0: Updated warning */}
-            {(format.formatId.includes('+') || format.formatId.includes('best')) && format.hasVideo && (
-              <div className="tooltip tooltip-top" data-tip="May be slower; auto-fallback to 720p if timeout">
+            {/* v5.4.0: Reliable badge for audio formats */}
+            {isReliable && (
+              <span className="badge badge-xs badge-success badge-outline ml-1">fast</span>
+            )}
+            {/* Warning for Best Quality video formats - may timeout */}
+            {!isReliable && (format.formatId.includes('+') || format.formatId.includes('best')) && format.hasVideo && (
+              <div className="tooltip tooltip-top" data-tip="Requires merging video+audio. May be slower.">
                 <FiAlertTriangle className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-warning" />
               </div>
             )}
@@ -223,9 +278,9 @@ const FormatCard = forwardRef<HTMLDivElement, FormatCardProps>(
             <span className="badge badge-xs">{format.ext.toUpperCase()}</span>
             {format.vbr && <span>{formatBitrate(format.vbr)}</span>}
             {!format.vbr && format.abr && <span>{formatBitrate(format.abr)}</span>}
-            {/* Merge indicator - v5.2.0: Added slower warning */}
+            {/* Merge indicator for video - v5.4.0: Updated warning */}
             {format.formatId.includes('+') && (
-              <span className="badge badge-xs badge-warning badge-outline">slower</span>
+              <span className="badge badge-xs badge-warning badge-outline">merge</span>
             )}
           </div>
         </div>
