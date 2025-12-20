@@ -14,44 +14,68 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   title: {
-    default: 'YouTube Downloader - Download Videos with yt-dlp',
-    template: '%s | YouTube Downloader',
+    default: 'YT Vid Save - Free YouTube Video & Audio Downloader Online',
+    template: '%s | YT Vid Save',
   },
-  description: 'A modern, production-ready web app to download YouTube videos using yt-dlp. Features 2025 bot detection fixes, support for videos, playlists, and multiple formats.',
-  keywords: ['youtube', 'downloader', 'yt-dlp', 'video', 'audio', 'mp3', 'mp4', 'playlist', 'download'],
-  authors: [{ name: 'YouTube Downloader Team' }],
-  creator: 'YouTube Downloader',
+  description: 'Download YouTube videos and audio for free with YT Vid Save. Fast, secure online tool supporting MP4, MP3, HD quality. No registration required. Works on all devices.',
+  keywords: ['youtube downloader', 'download youtube video', 'youtube to mp3', 'youtube to mp4', 'free youtube downloader', 'online video downloader', 'yt downloader', 'youtube audio download', 'HD video download'],
+  authors: [{ name: 'YT Vid Save' }],
+  creator: 'YT Vid Save',
+  publisher: 'YT Vid Save',
   manifest: '/manifest.json',
+  metadataBase: new URL('https://ytvidsave.online'),
+  alternates: {
+    canonical: '/',
+  },
   icons: {
     icon: '/icon.svg',
     apple: '/icon.svg',
   },
   openGraph: {
-    title: 'YouTube Downloader - Download Videos with yt-dlp',
-    description: 'Download YouTube videos and audio with a modern, responsive web app.',
+    title: 'YT Vid Save - Free YouTube Video & Audio Downloader',
+    description: 'Download YouTube videos and audio for free. Fast, secure, and easy to use. Supports MP4, MP3, and HD quality downloads.',
+    url: 'https://ytvidsave.online',
     type: 'website',
     locale: 'en_US',
-    siteName: 'YouTube Downloader',
+    siteName: 'YT Vid Save',
+    images: [
+      {
+        url: '/og-image.png',
+        width: 1200,
+        height: 630,
+        alt: 'YT Vid Save - YouTube Video Downloader',
+      },
+    ],
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'YouTube Downloader',
-    description: 'Download YouTube videos and audio with yt-dlp.',
+    title: 'YT Vid Save - Free YouTube Video Downloader',
+    description: 'Download YouTube videos and audio for free. Fast, secure online tool.',
+    images: ['/og-image.png'],
   },
   robots: {
     index: true,
     follow: true,
+    nocache: false,
     googleBot: {
       index: true,
       follow: true,
+      'max-video-preview': -1,
+      'max-image-preview': 'large',
+      'max-snippet': -1,
     },
+  },
+  verification: {
+    google: 'your-google-verification-code',
   },
 };
 
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  maximumScale: 5,
+  maximumScale: 1,
+  userScalable: false,
+  viewportFit: 'cover',
   themeColor: [
     { media: '(prefers-color-scheme: light)', color: '#ffffff' },
     { media: '(prefers-color-scheme: dark)', color: '#1d232a' },

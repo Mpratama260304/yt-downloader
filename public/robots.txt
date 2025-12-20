@@ -1,7 +1,15 @@
+# YT Vid Save - Robots.txt
+# https://ytvidsave.online
+
 User-agent: *
 Allow: /
-
-Sitemap: https://yourdomain.com/sitemap.xml
-
-# Block API routes from crawlers
 Disallow: /api/
+Disallow: /admin/
+Disallow: /_next/
+Disallow: /tmp/
+
+# Sitemap
+Sitemap: https://ytvidsave.online/sitemap.xml
+
+# Crawl-delay for polite crawling
+Crawl-delay: 1

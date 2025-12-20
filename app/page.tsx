@@ -263,15 +263,15 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Main Content */}
-      <section id="main-content" className="py-8 sm:py-12 px-3 sm:px-4">
-        <div className="container mx-auto max-w-4xl">
+      {/* Main Content - v5.4.0: Added overflow-hidden to prevent layout issues on mobile */}
+      <section id="main-content" className="py-8 sm:py-12 px-3 sm:px-4 overflow-hidden">
+        <div className="container mx-auto max-w-4xl w-full">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
             transition={{ duration: 0.5 }}
-            className="space-y-4 sm:space-y-6"
+            className="space-y-4 sm:space-y-6 w-full max-w-full"
           >
             {/* URL Form */}
             <div className="card glass-card">
