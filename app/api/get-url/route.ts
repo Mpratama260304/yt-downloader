@@ -42,7 +42,10 @@ export async function POST(request: NextRequest): Promise<NextResponse<ApiRespon
       );
     }
 
-    const { url, formatId } = validationResult.data;
+    const { url, formatId, format } = validationResult.data;
+    
+    // Use formatId or format, fallback to 'best'
+    const selectedFormat = formatId || format || 'best';
 
     // Clean up old temp cookies periodically
     cleanupOldTempCookies();
@@ -57,7 +60,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ApiRespon
     }
 
     // Get download URL using yt-dlp with auto-fetched cookies
-    const result = await getDownloadUrl(url, formatId, cookieTempPath);
+    const result = await getDownloadUrl(url, selectedFormat, cookieTempPath);
 
     // Determine extension from format or filename
     const ext = result.filename.split('.').pop() || 'mp4';

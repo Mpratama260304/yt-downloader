@@ -1,23 +1,23 @@
 # ===========================================
-# Multi-stage Dockerfile for YouTube Downloader v5.2.0
+# Multi-stage Dockerfile for YouTube Downloader v5.3.0
 # ===========================================
 #
 # 🚀 PHALA CLOUD & VPS DEPLOYMENT READY
 #
-# v5.2.0 TIMEOUT FIX UPDATE:
-# - REMOVED FFprobe dependency (causes false positives)
-# - Relaxed validation using metadata-based size check
-# - Extended timeouts for serverless (120s total)
-# - Reduced concurrent fragments (2) for stability
-# - Cookies cache extended to 60s
-# - Better error handling to avoid 500/504
+# v5.3.0 STREAMING FIX UPDATE (408 Timeout Final Fix):
+# - PURE STREAMING: Pipe yt-dlp stdout to response (no temp wait)
+# - KEEP-ALIVE: Heartbeat every 10s to prevent gateway timeout
+# - PROXY SUPPORT: Rotate proxies to bypass blocks
+# - NO TEMP FILE: Stream chunks directly as available
+# - Extended cookies cache to 120s for stability
 #
-# v5.0 CHANGES (retained):
-# - Auto-fetch cookies from external URL
-# - Smart fallback to consent cookies
-# - better-sqlite3 native module support
+# Key Changes from v5.2.0:
+# - process.stdout -> response streaming
+# - Transfer-Encoding: chunked
+# - Connection: keep-alive headers
+# - Proxy rotation support
 #
-# Build: docker build -t yourusername/youtube-downloader:5.2.0 .
+# Build: docker build -t yourusername/youtube-downloader:5.3.0 .
 # Push:  docker push yourusername/youtube-downloader:5.2.0
 # Run:   docker-compose up -d
 #
@@ -120,8 +120,8 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
 
 # Labels
 LABEL org.opencontainers.image.title="YouTube Downloader"
-LABEL org.opencontainers.image.description="Production-ready YouTube downloader with timeout fix, auto-cookies, and fallback formats"
-LABEL org.opencontainers.image.version="5.2.0"
+LABEL org.opencontainers.image.description="Production-ready YouTube downloader with streaming proxy, 408 fix, auto-cookies, and proxy rotation"
+LABEL org.opencontainers.image.version="5.3.0"
 
 # Start the application
 CMD ["node", "server.js"]

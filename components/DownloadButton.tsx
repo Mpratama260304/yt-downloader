@@ -165,7 +165,8 @@ export default function DownloadButton({
     connectSSE(downloadId);
 
     try {
-      // Make request to proxy download endpoint
+      // v5.3.0: Make request to streaming download endpoint
+      // Use keepalive for long downloads
       const response = await fetch('/api/download', {
         method: 'POST',
         headers: {
@@ -173,13 +174,16 @@ export default function DownloadButton({
         },
         body: JSON.stringify({
           url: videoUrl,
-          formatId: format.formatId,
+          format: format.formatId,
+          quality: format.quality,
           title: videoTitle,
           ext: format.ext,
           hasVideo: format.hasVideo,
-          downloadId, // Pass ID for SSE correlation
+          clientDownloadId: downloadId, // Pass ID for SSE correlation
         }),
         signal: abortControllerRef.current.signal,
+        // Keep connection alive for streaming
+        keepalive: false, // false for large responses
       });
 
       // Close SSE connection

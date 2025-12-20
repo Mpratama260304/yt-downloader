@@ -1,8 +1,8 @@
-# 🎬 YouTube Downloader v5.2.0 - Timeout Fix Update
+# 🎬 YouTube Downloader v5.3.0 - Streaming Fix Update
 
-A modern, production-ready web application for downloading YouTube videos using yt-dlp. Features **automatic real-time cookie fetching**, **relaxed validation** (no FFprobe), and **auto-fallback formats** optimized for serverless environments.
+A modern, production-ready web application for downloading YouTube videos using yt-dlp. Features **pure streaming proxy** (no temp file wait), **keep-alive heartbeats**, **proxy rotation**, and **auto-cookies** optimized for serverless environments.
 
-**🚀 Designed for Phala Cloud, Vercel, and VPS platforms with ~60s timeout limits**
+**🚀 Designed for Phala Cloud, Vercel, and VPS platforms with strict timeout limits**
 
 ![Next.js](https://img.shields.io/badge/Next.js-14-black?style=flat-square&logo=next.js)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue?style=flat-square&logo=typescript)
@@ -12,76 +12,121 @@ A modern, production-ready web application for downloading YouTube videos using 
 ![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker)
 ![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
 
-## ✨ What's New in v5.2.0
+## ✨ What's New in v5.3.0
 
-### 🛠️ Timeout Fix Update (Emergency)
-This update addresses issues from v5.1.0: false positive corruption errors, timeouts, and 500/504 server errors.
+### 🚀 Streaming Fix Update (408 Timeout Final Fix)
+This update addresses persistent **408 Request Timeout** errors that occurred even after v5.2.0 fixes.
 
-#### Problems Fixed
-- **"Downloaded file appears to be corrupted (too small)"** - False positives on normal files
-- **"Download timed out"** - Frequent timeouts especially on Best Quality
-- **504 Gateway Timeout** - Server exceeds serverless limits
-- **500 Internal Server Error** - Unhandled errors crashing the server
-
-#### Solutions Implemented
-| Issue | v5.1.0 Problem | v5.2.0 Fix |
-|-------|----------------|------------|
-| False corruption | FFprobe too strict | Removed FFprobe, use metadata-based size check (50-200% tolerance) |
-| Timeouts | 5min timeout too long | 120s total timeout (optimized for serverless) |
-| Slow downloads | 4 concurrent fragments | Reduced to 2 for stability |
-| Stale cookies | 30s cache | Extended to 60s cache |
-| 500 errors | Unhandled exceptions | Better try/catch, return JSON errors |
-| Progress stuck | Long "Connecting..." | 45s connect timeout with retry |
-
-### Key Changes from v5.1.0
-
-```diff
-- FFprobe validation (slow, causes false positives)
-+ Lightweight metadata-based validation
-+ File header signature check only
-
-- Concurrent fragments: 4
-+ Concurrent fragments: 2 (stability)
-
-- Cookies cache: 30s
-+ Cookies cache: 60s (stability)
-
-- Download timeout: 5 minutes
-+ Download timeout: 120s (serverless-optimized)
-
-- Connect timeout: 30s
-+ Connect timeout: 45s with early retry
+#### Error Being Fixed
+```
+POST https://ytvidsave.online/api/download 408 (Request Timeout)
+Download error: Error: Download timed out. Try a lower quality format.
 ```
 
-### 🍪 Auto-Cookies System (v5.0)
-- **Real-time Cookie Sync** - Fetches fresh cookies from external URL
-- **60-second Cache** - Extended from 30s for better stability
-- **Auto-Refresh** - Force refresh on 403/429 errors
-- **Smart Fallback** - Uses consent cookies if fetch fails
+#### Root Cause Analysis
+The previous approach waited for the full file to download before streaming to the client. On Phala Cloud (~60-120s gateway timeout), this caused 408 errors for any video that took longer than the gateway timeout.
+
+#### Solution: Pure Streaming
+```
+                    OLD (v5.2.0)                              NEW (v5.3.0)
+                    
+   yt-dlp ──► temp file ──► wait ──► stream         yt-dlp stdout ─┬─► response (chunked)
+                  │                     │                           │
+                  └── could take 2min+ ─┘                           └── immediate streaming
+                         ▼                                                    ▼
+                     408 TIMEOUT                                          SUCCESS
+```
+
+### Key Changes from v5.2.0
+
+| Feature | v5.2.0 | v5.3.0 |
+|---------|--------|--------|
+| Output Method | Temp file → stream | `stdout` → direct stream |
+| Keep-Alive | None | Heartbeat every 10s |
+| Transfer | Wait for complete | Chunked, immediate |
+| Proxy Support | None | Rotation via env/admin |
+| Cookies Cache | 60s | 120s |
+| Concurrent Fragments | 2 | 1 (stability) |
+| Timeout | 120s | 300s (5min with streaming) |
+
+### Implementation Details
+
+```typescript
+// v5.3.0 Streaming approach
+const args = [url, '-f', format, '-o', '-']; // Output to stdout
+const proc = spawn('yt-dlp', args);
+
+// Pipe stdout directly to response (no temp file!)
+const stream = new ReadableStream({
+  start(controller) {
+    proc.stdout.on('data', chunk => controller.enqueue(chunk));
+    proc.on('close', () => controller.close());
+  }
+});
+
+return new Response(stream, {
+  headers: {
+    'Transfer-Encoding': 'chunked',
+    'Connection': 'keep-alive',
+  }
+});
+```
+
+## 🛡️ Proxy Support (NEW in v5.3.0)
+
+### Configure Proxies
+
+**Option 1: Environment Variable**
+```yaml
+# docker-compose.yml
+environment:
+  - PROXY_LIST=http://user:pass@proxy1:8080,http://proxy2:8080
+  # or
+  - PROXIES=socks5://proxy:1080
+```
+
+**Option 2: Admin Panel**
+Navigate to Admin → Settings → Proxies and add your proxy list.
+
+### Why Use Proxies?
+- Bypass YouTube IP blocks
+- Improve download speeds
+- Distribute requests across IPs
+- Avoid rate limiting
 
 ## ⚠️ Serverless Deployment Notes
 
-### Phala Cloud / Vercel Limits
+### Phala Cloud / Vercel Recommendations
 
-Most serverless platforms have timeout limits (~60s). To work within these:
+1. **Streaming works within limits** - No more 408 timeouts on normal videos
+2. **Very long videos (>10 min)** - May still timeout; consider lower quality
+3. **Proxy rotation** - Helps if YouTube blocks your server IP
+4. **Keep-alive heartbeats** - Prevent gateway from closing idle connections
 
-1. **Prefer lower quality formats** - 720p or below for reliable downloads
-2. **Best Quality may timeout** - Auto-fallback to 720p → 480p if issues
-3. **Large files (>100MB)** - May timeout, try lower quality
-4. **Short videos** - Usually work fine at any quality
-
-### Recommended Settings
+### Recommended docker-compose.yml
 
 ```yaml
-# docker-compose.yml for Phala Cloud
+version: '3.8'
 services:
   youtube-downloader:
-    image: mpratamamail/youtube-downloader:5.2.0
+    image: mpratamamail/youtube-downloader:5.3.0
+    container_name: youtube-downloader
+    ports:
+      - "3000:3000"
     environment:
+      - NODE_ENV=production
+      - ADMIN_USERNAME=admin
+      - ADMIN_PASSWORD=your-secure-password
+      - JWT_SECRET=your-jwt-secret-key
       - COOKIES_URL=https://your-cookies-server.com/cookies.txt
-      # Optional tuning:
-      - DOWNLOAD_TIMEOUT=110000  # 110s (default)
-      - CONNECT_TIMEOUT=45000    # 45s (default)
+      # Optional: Add proxies
+      - PROXY_LIST=http://proxy1:8080,http://proxy2:8080
+    volumes:
+      - youtube_data:/data
+    restart: unless-stopped
+
+volumes:
+  youtube_data:
 ```
 
 ## ✨ Features
@@ -90,16 +135,17 @@ services:
 - 🎬 **Video Downloads** - Various resolutions (4K, 1080p, 720p, etc.)
 - 🎵 **Audio Extraction** - MP3, M4A formats
 - 📋 **Playlist Support** - Browse and download individual videos
-- 🔄 **Server-Side Proxy** - Downloads proxied with auto-cookies
+- 🔄 **Streaming Proxy** - Pure stdout streaming, no temp file wait
 - 📱 **YouTube Shorts** - Full support
 - 📏 **File Size Display** - Estimated file size for each format
-- ⬇️ **Progress Tracking** - Real-time SSE progress with verify phase
+- ⬇️ **Progress Tracking** - Real-time SSE progress
 
 ### 🎛️ Admin Panel
 - 🔐 **Secure Authentication** - JWT-based login
 - 📊 **Dashboard** - Real-time statistics
 - 📜 **History Logs** - Track all activity
 - ⚙️ **Site Settings** - Customize appearance
+- 🌐 **Proxy Management** - Add/remove proxies
 - 👤 **Profile Management** - Change password
 
 ### 2025 Bot Detection Fixes
@@ -108,9 +154,10 @@ services:
 - 🔐 **Consent Cookies** - Automatic bypass fallback
 - ⏱️ **Request Throttling** - Avoids rate limits
 - 🌍 **Geo Bypass** - Works around regional restrictions
+- 🔄 **Proxy Rotation** - Distribute requests across IPs
 
 ### Modern UI/UX
-- 🎨 **Beautiful Design** - DaisyUI components
+- �� **Beautiful Design** - DaisyUI components
 - 🌙 **Dark/Light Mode** - System-aware toggle
 - ✨ **Animations** - Framer Motion
 - 📱 **Fully Responsive** - Mobile-first
@@ -122,34 +169,10 @@ services:
 
 ```bash
 # Pull latest image
-docker pull mpratamamail/youtube-downloader:5.2.0
+docker pull mpratamamail/youtube-downloader:5.3.0
 
 # Run with docker-compose
 docker-compose up -d
-```
-
-### docker-compose.yml
-
-```yaml
-version: '3.8'
-services:
-  youtube-downloader:
-    image: mpratamamail/youtube-downloader:5.2.0
-    container_name: youtube-downloader
-    ports:
-      - "3000:3000"
-    environment:
-      - NODE_ENV=production
-      - ADMIN_USERNAME=admin
-      - ADMIN_PASSWORD=your-secure-password
-      - JWT_SECRET=your-jwt-secret-key
-      - COOKIES_URL=https://your-cookies-server.com/cookies.txt
-    volumes:
-      - youtube_data:/data
-    restart: unless-stopped
-
-volumes:
-  youtube_data:
 ```
 
 ### Local Development
@@ -178,81 +201,78 @@ npm start
 | `ADMIN_PASSWORD` | `admin123` | Admin panel password |
 | `JWT_SECRET` | random | Secret for JWT tokens |
 | `COOKIES_URL` | cloudflare tunnel | External cookies URL |
-| `DOWNLOAD_TIMEOUT` | `110000` | Max download time (ms) |
-| `CONNECT_TIMEOUT` | `45000` | Connection timeout (ms) |
+| `PROXY_LIST` | (none) | Comma-separated proxy URLs |
 
-### Cookies URL Format
-
-The external URL must serve Netscape format cookies:
+### Proxy URL Formats
 
 ```
-# Netscape HTTP Cookie File
-.youtube.comTRUE/TRUE0SIDyour-sid-value
-.youtube.comTRUE/TRUE0HSIDyour-hsid-value
-...
+http://proxy:8080
+http://user:pass@proxy:8080
+socks5://proxy:1080
+socks5://user:pass@proxy:1080
 ```
 
-## 📊 Validation Flow (v5.2.0)
+## 📊 Streaming Flow (v5.3.0)
 
 ```
-┌─────────────────┐     Download Complete     ┌─────────────────┐
-│   yt-dlp        │ ────────────────────────► │   Lightweight   │
-│   Download      │                           │   Validation    │
-└─────────────────┘                           └────────┬────────┘
-                                                       │
-                     ┌─────────────────────────────────┼─────────────────────────────────┐
-                     │                                 │                                 │
-                     ▼                                 ▼                                 ▼
-            ┌────────────────┐              ┌────────────────┐              ┌────────────────┐
-            │   Size > 1KB   │              │  Size within   │              │   Size way     │
-            │   ✅ Pass      │              │  50-200% of    │              │   off (<10%)   │
-            └────────────────┘              │  expected      │              │   ❌ Retry     │
-                                            │   ✅ Pass      │              └────────────────┘
-                                            └────────────────┘                     │
-                                                                                   ▼
-                                                                          ┌────────────────┐
-                                                                          │  Auto-fallback │
-                                                                          │  720p → 480p   │
-                                                                          └────────────────┘
+┌─────────────────┐     yt-dlp stdout     ┌─────────────────┐
+│   yt-dlp        │ ────────────────────► │   Response      │
+│   -o -          │    (immediate)        │   Stream        │
+└─────────────────┘                       └────────┬────────┘
+                                                   │
+         ┌─────────────────────────────────────────┤
+         │                                         │
+         ▼                                         ▼
+┌────────────────┐                       ┌────────────────┐
+│  Keep-Alive    │                       │  Chunked       │
+│  Heartbeat     │                       │  Transfer      │
+│  every 10s     │                       │  to Client     │
+└────────────────┘                       └────────────────┘
 ```
 
-**Key differences from v5.1.0:**
-- No FFprobe spawn (was slow and error-prone)
-- Very relaxed size tolerance (50-200% vs 80-120%)
-- Only fails if file is < 1KB or drastically wrong size
-- Accepts unknown formats (avoids false positives)
+**Key points:**
+- No temp file wait (chunks stream immediately)
+- Keep-alive prevents gateway timeout
+- Chunked transfer allows progressive download
+- Client starts receiving data within seconds
 
 ## 🐛 Troubleshooting
 
+### "408 Request Timeout"
+- **v5.3.0 should fix this** - Streaming eliminates full-file wait
+- If still occurs: Video may be too long, try lower quality
+- Check if proxies are configured (may help with slow sources)
+
 ### "Download timed out"
-- **Cause**: File too large for serverless timeout
-- **Fix**: Try a lower quality (720p or below)
+- Very long videos (>10 min) may still timeout
+- Solution: Select 480p or below for long videos
+- Enable proxy rotation if available
 
 ### "YouTube blocked the request"
-- **Cause**: Bot detection triggered
-- **Fix**: Wait a few minutes, cookies will auto-refresh
-
-### "File appears corrupted"
-- **Cause**: v5.2.0 should rarely show this
-- **Fix**: If it happens, the file is truly broken. Try different format.
-
-### 504 Gateway Timeout
-- **Cause**: Serverless platform timeout exceeded
-- **Fix**: Use lower quality, or increase platform timeout if possible
+- Bot detection triggered
+- Wait a few minutes; cookies will auto-refresh
+- Add proxies to rotate IP addresses
 
 ### Server not responding
-- **Cause**: Network issues or YouTube blocking
-- **Fix**: Check COOKIES_URL is accessible, wait and retry
+- Check COOKIES_URL accessibility
+- Verify proxy configuration if using
+- Check server logs for errors
 
 ## 📝 Changelog
 
-### v5.2.0 (2025-01-XX)
-- 🛠️ **Removed FFprobe** - Eliminates false positive corruption errors
-- ⏱️ **Optimized timeouts** - 120s total, 45s connect (serverless-friendly)
-- 🔄 **Reduced concurrency** - 2 fragments for stability
-- 🍪 **Extended cache** - 60s cookies cache
-- 🛡️ **Better error handling** - No more 500 crashes, returns JSON errors
-- ⚡ **Relaxed validation** - 50-200% size tolerance
+### v5.3.0 (2025-01-XX) - Streaming Fix
+- 🚀 **Pure streaming** - `stdout` to response (no temp file wait)
+- 💓 **Keep-alive heartbeats** - 10s interval to prevent gateway timeout
+- 🔄 **Proxy rotation** - Support via env/admin panel
+- 🍪 **Extended cache** - 120s cookies cache for stability
+- 📦 **Chunked transfer** - Immediate data flow to client
+- ⬇️ **Single fragment** - Better stability for streaming
+
+### v5.2.0 (2025-01-XX) - Timeout Fix
+- Removed FFprobe validation
+- Relaxed size validation (50-200% tolerance)
+- Extended timeouts (120s)
+- Reduced concurrent fragments (2)
 
 ### v5.1.0 (2025-01-XX)
 - Added FFprobe validation (removed in v5.2.0)

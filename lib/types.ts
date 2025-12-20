@@ -13,10 +13,17 @@ export const youtubeUrlSchema = z.string().refine(
 
 /**
  * Schema for format selection request
+ * v5.3.0: Added quality, format, clientDownloadId for streaming support
  */
 export const formatRequestSchema = z.object({
   url: youtubeUrlSchema,
-  formatId: z.string().min(1, 'Format ID is required'),
+  formatId: z.string().optional(), // Legacy
+  format: z.string().optional(),   // v5.3.0: format type
+  quality: z.string().optional(),  // v5.3.0: quality selection
+  title: z.string().optional(),    // Video title for filename
+  ext: z.string().optional(),      // Output extension
+  hasVideo: z.boolean().optional(),// Has video stream
+  clientDownloadId: z.string().optional(), // For SSE progress
 });
 
 /**
