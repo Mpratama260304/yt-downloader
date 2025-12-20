@@ -1,42 +1,74 @@
 /**
  * /api/download/route.ts
  * 
- * Server-side proxy download endpoint v5.0.0
+ * Server-side proxy download endpoint v5.1.0
  * 
- * v5.0.0 CHANGES:
- * - Auto-fetch cookies from external URL (no manual management)
- * - Fresh cookies fetched on-demand for each request
- * - Real-time sync with cookie source (refreshes every ~30s)
- * - Fallback to consent cookies if fetch fails
+ * v5.1.0 CORRUPTION FIX UPDATE:
+ * - FFprobe validation after download completes
+ * - Auto-fallback to safer formats if corruption detected
+ * - Cookies caching (30s TTL) for faster subsequent requests
+ * - Optimized yt-dlp args for stability (reduced concurrent fragments)
+ * - Enhanced timeout handling with AbortController
+ * - More granular SSE progress updates
+ * - Retry logic with format fallback
  * 
  * PREVIOUS FIXES (retained):
  * 1. NO cookies via headers (causes deprecated warning)
  * 2. NO concurrent fragments (causes "No such file or directory" errors)
  * 3. Download to temp file FIRST, then stream complete file
  * 4. Proper cleanup of temp files
+ * 5. Auto-fetch cookies from external URL
  * 
- * @version 5.0.0
+ * @version 5.1.0
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { spawn } from 'child_process';
+import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import { formatRequestSchema } from '@/lib/types';
 import { checkRateLimit, isBotDetectionError, getErrorMessage, sanitizeFilename } from '@/lib/ytdlp';
-import { fetchFreshCookies, cleanupTempCookies, cleanupOldTempCookies } from '@/lib/auto-cookies';
+import { cleanupOldTempCookies } from '@/lib/auto-cookies';
 import { addHistoryEntry } from '@/lib/db';
 import { updateProgress } from '@/lib/progress-store';
+import {
+  getCachedCookies,
+  invalidateCookiesCache,
+  validateWithFFprobe,
+  quickValidateFile,
+  getFallbackFormat,
+  isBestQualityFormat,
+  isCorruptionError,
+  isTimeoutError,
+  createTimeoutController,
+  killProcessWithTimeout,
+  isFFprobeAvailable,
+  formatBytes,
+} from '@/lib/yt-dlp-utils';
 
 export const maxDuration = 300; // 5 minutes for large video downloads
 export const dynamic = 'force-dynamic';
 
 // Track active downloads for cleanup
-const activeDownloads = new Map<string, { process: any; tempFile?: string; tempCookie?: string }>();
+const activeDownloads = new Map<string, { 
+  process: ChildProcess | null; 
+  tempFile?: string; 
+  tempCookie?: string;
+  timeoutController?: ReturnType<typeof createTimeoutController>;
+}>();
 
-// Max retries with fresh cookies
+// Max retries (with fallback formats)
 const MAX_RETRIES = 3;
+
+// Connection timeout (30 seconds for initial connection)
+const CONNECT_TIMEOUT = 30 * 1000;
+
+// Download timeout (5 minutes total)
+const DOWNLOAD_TIMEOUT = 5 * 60 * 1000;
+
+// FFprobe available flag (cached)
+let ffprobeAvailable: boolean | null = null;
 
 /**
  * Get yt-dlp binary path
@@ -51,7 +83,6 @@ function getYtDlpPath(): string {
 
 /**
  * Get temporary directory for downloads
- * Creates it if it doesn't exist
  */
 function getTempDir(): string {
   const tempDir = path.join(os.tmpdir(), 'yt-downloader');
@@ -148,23 +179,41 @@ function getContentType(ext: string, hasVideo: boolean): string {
 
 /**
  * Parse yt-dlp progress from stderr
+ * Enhanced with more granular phase detection
  */
 function parseProgress(stderr: string): { progress: number; message: string; phase: string } | null {
+  // Download progress
   const downloadMatch = stderr.match(/\[download\]\s+(\d+\.?\d*)%/);
   if (downloadMatch) {
     const progress = parseFloat(downloadMatch[1]);
     return {
-      progress: Math.min(progress * 0.9, 90), // Cap at 90% during download (save 10% for merge/transfer)
+      progress: Math.min(progress * 0.85, 85), // Cap at 85% during download
       message: `Downloading: ${Math.round(progress)}%`,
       phase: 'downloading',
     };
   }
 
-  if (stderr.includes('[Merger]') || stderr.includes('[ffmpeg]')) {
+  // Merger/FFmpeg phases
+  if (stderr.includes('[Merger]') || stderr.includes('Merging formats')) {
     return {
-      progress: 92,
+      progress: 88,
       message: 'Merging video and audio...',
       phase: 'merging',
+    };
+  }
+
+  if (stderr.includes('[ffmpeg]')) {
+    if (stderr.includes('Destination:')) {
+      return {
+        progress: 90,
+        message: 'Processing with FFmpeg...',
+        phase: 'processing',
+      };
+    }
+    return {
+      progress: 89,
+      message: 'Converting format...',
+      phase: 'converting',
     };
   }
 
@@ -176,26 +225,31 @@ function parseProgress(stderr: string): { progress: number; message: string; pha
     };
   }
 
+  if (stderr.includes('fragments')) {
+    const fragMatch = stderr.match(/(\d+)\s*fragments/);
+    if (fragMatch) {
+      return {
+        progress: 3,
+        message: `Downloading ${fragMatch[1]} fragments...`,
+        phase: 'downloading',
+      };
+    }
+  }
+
+  if (stderr.includes('[youtube]') || stderr.includes('[info]')) {
+    return {
+      progress: 2,
+      message: 'Extracting video info...',
+      phase: 'extracting',
+    };
+  }
+
   return null;
 }
 
 /**
- * Validate downloaded file
- */
-function validateDownload(filePath: string, minSize: number = 1024): boolean {
-  try {
-    if (!fs.existsSync(filePath)) return false;
-    const stats = fs.statSync(filePath);
-    return stats.size >= minSize;
-  } catch {
-    return false;
-  }
-}
-
-/**
  * Build SAFE yt-dlp arguments
- * NO cookies via headers - only via --cookies file
- * NO concurrent fragments - causes race condition errors
+ * v5.1.0: Optimized for stability and corruption prevention
  */
 function buildSafeYtDlpArgs(
   url: string,
@@ -210,41 +264,30 @@ function buildSafeYtDlpArgs(
     url,
     '-f', formatId,
     '-o', outputPath,
-    // Base args
     '--no-playlist',
     '--no-mtime',
-    '--retries', '10',
-    '--fragment-retries', '10',
+    '--retries', '15',
+    '--fragment-retries', '15',
     '--file-access-retries', '10',
-    // CRITICAL: Do NOT use --concurrent-fragments - causes "No such file" errors
-    // '--concurrent-fragments', '4', // REMOVED - causes fragment race condition
-    // Speed optimizations (without concurrent fragments)
     '--buffer-size', '16M',
     '--http-chunk-size', '10M',
-    // Geo bypass
+    '--socket-timeout', '10',
     '--geo-bypass',
     '--force-ipv4',
-    // No warnings
     '--no-warnings',
     '--ignore-errors',
-    // Socket timeout
-    '--socket-timeout', '30',
+    '--embed-metadata',
   ];
 
-  // CRITICAL: Only pass cookies via --cookies file, NEVER via headers
   if (cookiePath && fs.existsSync(cookiePath)) {
     args.push('--cookies', cookiePath);
   }
 
-  // Handle merged formats
   if (needsMerge) {
     args.push('--merge-output-format', ext === 'webm' ? 'webm' : 'mp4');
-    args.push('--embed-metadata');
-    // FFmpeg args for proper MP4 with fast start
-    args.push('--postprocessor-args', 'ffmpeg:-c:v copy -c:a aac -movflags +faststart');
+    args.push('--postprocessor-args', 'ffmpeg:-c:v copy -c:a aac -movflags +faststart -strict -2');
   }
 
-  // Handle audio extraction
   if (!hasVideo && (ext === 'mp3' || ext === 'm4a')) {
     args.push('-x');
     args.push('--audio-format', ext);
@@ -255,34 +298,128 @@ function buildSafeYtDlpArgs(
 }
 
 /**
- * Execute download with retry logic
+ * Validate downloaded file using FFprobe
+ */
+async function validateDownloadedFile(
+  filePath: string, 
+  hasVideo: boolean,
+  clientDownloadId: string
+): Promise<{ isValid: boolean; error?: string }> {
+  updateProgress(clientDownloadId, {
+    progress: 92,
+    message: 'Validating download...',
+    phase: 'validating',
+  });
+
+  if (ffprobeAvailable === null) {
+    ffprobeAvailable = await isFFprobeAvailable();
+    console.log(`[Validation] FFprobe available: ${ffprobeAvailable}`);
+  }
+
+  if (ffprobeAvailable) {
+    const result = await validateWithFFprobe(filePath);
+    
+    if (!result.isValid) {
+      console.error(`[Validation] FFprobe failed: ${result.error}`);
+      return { isValid: false, error: result.error || 'FFprobe validation failed' };
+    }
+
+    if (hasVideo && !result.hasVideo) {
+      return { isValid: false, error: 'No video stream found' };
+    }
+
+    if (!result.hasAudio && !result.hasVideo) {
+      return { isValid: false, error: 'No playable streams found' };
+    }
+
+    console.log(`[Validation] FFprobe passed: video=${result.hasVideo}, audio=${result.hasAudio}, duration=${result.duration}s`);
+    return { isValid: true };
+  } else {
+    const result = quickValidateFile(filePath, hasVideo);
+    
+    if (!result.isValid) {
+      console.error(`[Validation] Quick check failed: ${result.error}`);
+      return result;
+    }
+
+    console.log('[Validation] Quick check passed');
+    return { isValid: true };
+  }
+}
+
+/**
+ * Execute download with timeout and validation
  */
 async function executeDownload(
   url: string,
   formatId: string,
   tempFile: string,
   cookiePath: string | null,
-  options: { ext?: string; hasVideo?: boolean; needsMerge?: boolean; downloadId: string; clientDownloadId: string }
-): Promise<{ success: boolean; error?: string; isBotDetection?: boolean }> {
-  const { ext, hasVideo, needsMerge, downloadId, clientDownloadId } = options;
+  options: { 
+    ext?: string; 
+    hasVideo?: boolean; 
+    needsMerge?: boolean; 
+    downloadId: string; 
+    clientDownloadId: string;
+    attempt: number;
+  }
+): Promise<{ 
+  success: boolean; 
+  error?: string; 
+  isBotDetection?: boolean;
+  isCorruption?: boolean;
+  isTimeout?: boolean;
+}> {
+  const { ext, hasVideo, needsMerge, downloadId, clientDownloadId, attempt } = options;
   const ytdlpPath = getYtDlpPath();
   
   return new Promise((resolve) => {
     const args = buildSafeYtDlpArgs(url, formatId, tempFile, cookiePath, { ext, hasVideo, needsMerge });
     
-    console.log(`[Download ${downloadId}] Executing yt-dlp with args:`, args.slice(0, 10).join(' ') + '...');
+    console.log(`[Download ${downloadId}] Attempt ${attempt}: format=${formatId}`);
     
     const childProcess = spawn(ytdlpPath, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
-    activeDownloads.set(downloadId, { process: childProcess, tempFile, tempCookie: cookiePath || undefined });
+    const timeoutController = createTimeoutController(DOWNLOAD_TIMEOUT, () => {
+      console.log(`[Download ${downloadId}] Timeout - killing process`);
+      updateProgress(clientDownloadId, {
+        progress: 0,
+        message: 'Connection timeout - retrying...',
+        phase: 'timeout',
+      });
+      killProcessWithTimeout(childProcess);
+    });
+
+    activeDownloads.set(downloadId, { 
+      process: childProcess, 
+      tempFile, 
+      tempCookie: cookiePath || undefined,
+      timeoutController,
+    });
 
     let errorOutput = '';
     let lastProgress = 0;
+    let receivedData = false;
 
-    // Parse stderr for progress
+    const connectTimeout = setTimeout(() => {
+      if (!receivedData) {
+        console.log(`[Download ${downloadId}] Connection timeout`);
+        timeoutController.abort();
+        killProcessWithTimeout(childProcess);
+        resolve({ 
+          success: false, 
+          error: 'Connection timeout - server not responding',
+          isTimeout: true,
+        });
+      }
+    }, CONNECT_TIMEOUT);
+
     childProcess.stderr.on('data', (data: Buffer) => {
+      receivedData = true;
+      clearTimeout(connectTimeout);
+      
       const text = data.toString();
       errorOutput += text;
       
@@ -296,9 +433,7 @@ async function executeDownload(
         });
       }
 
-      // Log significant events (but not every fragment)
       if (text.includes('[download]') && text.includes('%')) {
-        // Only log every 10%
         const match = text.match(/(\d+)\.?\d*%/);
         if (match) {
           const pct = parseInt(match[1]);
@@ -311,53 +446,70 @@ async function executeDownload(
       }
     });
 
-    // Ignore stdout when downloading to file
-    childProcess.stdout.on('data', () => {});
+    childProcess.stdout.on('data', () => {
+      receivedData = true;
+      clearTimeout(connectTimeout);
+    });
 
-    // Handle process errors
     childProcess.on('error', (error: Error) => {
+      clearTimeout(connectTimeout);
+      timeoutController.abort();
       console.error(`[Download ${downloadId}] Process error:`, error);
       activeDownloads.delete(downloadId);
       resolve({ success: false, error: error.message });
     });
 
-    // Timeout after 5 minutes
-    const timeout = setTimeout(() => {
-      console.log(`[Download ${downloadId}] Timeout - killing process`);
-      childProcess.kill('SIGTERM');
-      activeDownloads.delete(downloadId);
-      resolve({ success: false, error: 'Download timed out' });
-    }, 5 * 60 * 1000);
-
-    // Handle completion
-    childProcess.on('close', (code: number) => {
-      clearTimeout(timeout);
+    childProcess.on('close', async (code: number) => {
+      clearTimeout(connectTimeout);
+      timeoutController.abort();
       activeDownloads.delete(downloadId);
 
-      // Check for bot detection
+      if (timeoutController.isAborted) {
+        resolve({ success: false, error: 'Download timed out', isTimeout: true });
+        return;
+      }
+
       if (isBotDetectionError({ message: errorOutput })) {
-        console.log(`[Download ${downloadId}] Bot detection in stderr`);
+        console.log(`[Download ${downloadId}] Bot detection`);
         resolve({ success: false, error: 'Bot detection', isBotDetection: true });
         return;
       }
 
-      // Check for fragment error
       if (errorOutput.includes('No such file or directory') && errorOutput.includes('Frag')) {
-        console.log(`[Download ${downloadId}] Fragment file error`);
-        resolve({ success: false, error: 'Fragment download error - please retry' });
+        console.log(`[Download ${downloadId}] Fragment error`);
+        resolve({ success: false, error: 'Fragment download error', isCorruption: true });
         return;
       }
 
       if (code !== 0) {
-        console.error(`[Download ${downloadId}] Process exited with code ${code}`);
-        resolve({ success: false, error: getErrorMessage({ message: errorOutput }) || 'Download failed' });
+        console.error(`[Download ${downloadId}] Exit code ${code}`);
+        const errorMsg = getErrorMessage({ message: errorOutput }) || 'Download failed';
+        resolve({ 
+          success: false, 
+          error: errorMsg,
+          isCorruption: isCorruptionError(errorMsg),
+          isTimeout: isTimeoutError(errorMsg),
+        });
         return;
       }
 
-      // Validate file
-      if (!validateDownload(tempFile)) {
-        console.error(`[Download ${downloadId}] File validation failed`);
-        resolve({ success: false, error: 'Downloaded file is corrupted or empty' });
+      if (!fs.existsSync(tempFile)) {
+        resolve({ success: false, error: 'File not found', isCorruption: true });
+        return;
+      }
+
+      const stats = fs.statSync(tempFile);
+      console.log(`[Download ${downloadId}] File size: ${formatBytes(stats.size)}`);
+
+      const validation = await validateDownloadedFile(tempFile, hasVideo !== false, clientDownloadId);
+      
+      if (!validation.isValid) {
+        console.error(`[Download ${downloadId}] Validation failed: ${validation.error}`);
+        resolve({ 
+          success: false, 
+          error: validation.error || 'Video may be corrupted',
+          isCorruption: true,
+        });
         return;
       }
 
@@ -368,9 +520,6 @@ async function executeDownload(
 
 /**
  * POST /api/download
- * Server-side proxy download with retry logic
- * 
- * v5.0: Uses auto-fetched cookies from external URL
  */
 export async function POST(request: NextRequest): Promise<Response> {
   const downloadId = Math.random().toString(36).substring(7);
@@ -378,10 +527,8 @@ export async function POST(request: NextRequest): Promise<Response> {
   let currentCookiePath: string | null = null;
   
   try {
-    // Clean up old temp cookies periodically
     cleanupOldTempCookies();
     
-    // Rate limiting
     const ip = request.headers.get('x-forwarded-for')?.split(',')[0] || 
                request.headers.get('x-real-ip') || 'unknown';
     
@@ -392,7 +539,6 @@ export async function POST(request: NextRequest): Promise<Response> {
       );
     }
 
-    // Parse and validate request
     const body = await request.json();
     const validationResult = formatRequestSchema.safeParse(body);
     if (!validationResult.success) {
@@ -402,78 +548,96 @@ export async function POST(request: NextRequest): Promise<Response> {
       );
     }
 
-    const { url, formatId } = validationResult.data;
+    const { url, formatId: requestedFormatId } = validationResult.data;
     const title = body.title || 'video';
     const ext = body.ext || 'mp4';
     const hasVideo = body.hasVideo !== false;
     const clientDownloadId = body.downloadId || downloadId;
 
-    // Determine if format needs merging
-    const needsMerge = formatId.includes('+');
+    const isBestQuality = isBestQualityFormat(requestedFormatId);
+    const needsMerge = requestedFormatId.includes('+');
     const outputExt = hasVideo ? (ext === 'webm' ? 'webm' : 'mp4') : (ext || 'm4a');
 
-    // Create temp file path
     tempFile = getTempFilePath(outputExt);
 
-    console.log(`[Download ${downloadId}] Starting for: ${url}`);
-    console.log(`[Download ${downloadId}] Format: ${formatId}, Needs merge: ${needsMerge}`);
-    console.log(`[Download ${downloadId}] Output: ${tempFile}`);
+    console.log(`[Download ${downloadId}] URL: ${url}`);
+    console.log(`[Download ${downloadId}] Format: ${requestedFormatId}, Best: ${isBestQuality}, Merge: ${needsMerge}`);
 
-    // Initialize progress
     updateProgress(clientDownloadId, {
       progress: 0,
-      message: 'Starting download...',
+      message: 'Fetching cookies...',
       phase: 'preparing',
     });
 
-    // Retry loop with fresh auto-fetched cookies
     let lastError = '';
     let lastIsBotDetection = false;
+    let lastIsCorruption = false;
+    let usedFallback = false;
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-      // Cleanup previous attempt's cookies
-      if (currentCookiePath) {
-        await cleanupTempCookies(currentCookiePath);
-        currentCookiePath = null;
-      }
+      let formatId = requestedFormatId;
       
-      // Fetch fresh cookies from external URL for each attempt
-      // This ensures we always have the latest cookies (source refreshes every ~30s)
-      const cookiesResult = await fetchFreshCookies();
-      currentCookiePath = cookiesResult.tempPath || null;
-      
-      if (cookiesResult.usedFallback) {
-        console.warn(`[Download ${downloadId}] Using fallback cookies:`, cookiesResult.error);
+      if (attempt > 1 && lastIsCorruption) {
+        formatId = getFallbackFormat(attempt - 1, requestedFormatId);
+        usedFallback = true;
+        console.log(`[Download ${downloadId}] Fallback format: ${formatId}`);
+        
+        updateProgress(clientDownloadId, {
+          progress: 2,
+          message: `Retrying with safer format (${attempt}/${MAX_RETRIES})...`,
+          phase: 'preparing',
+        });
       }
 
-      console.log(`[Download ${downloadId}] Attempt ${attempt}/${MAX_RETRIES}, cookies: ${cookiesResult.usedFallback ? 'fallback' : 'fresh'}`);
-
+      const forceRefreshCookies = lastIsBotDetection || (attempt > 1 && lastError.includes('403'));
+      
       updateProgress(clientDownloadId, {
-        progress: attempt > 1 ? 5 : 0,
-        message: attempt > 1 ? `Retrying (${attempt}/${MAX_RETRIES})...` : 'Starting download...',
+        progress: attempt === 1 ? 1 : 3,
+        message: forceRefreshCookies ? 'Fetching fresh cookies...' : 'Preparing download...',
         phase: 'preparing',
       });
 
-      // Execute download
+      try {
+        const cookiesResult = await getCachedCookies(forceRefreshCookies);
+        currentCookiePath = cookiesResult.tempPath;
+        
+        if (cookiesResult.usedFallback) {
+          console.warn(`[Download ${downloadId}] Using fallback cookies`);
+        } else if (cookiesResult.fromCache) {
+          console.log(`[Download ${downloadId}] Using cached cookies`);
+        } else {
+          console.log(`[Download ${downloadId}] Using fresh cookies`);
+        }
+      } catch (cookieError: any) {
+        console.error(`[Download ${downloadId}] Cookie error:`, cookieError.message);
+      }
+
+      console.log(`[Download ${downloadId}] Attempt ${attempt}/${MAX_RETRIES}`);
+
+      updateProgress(clientDownloadId, {
+        progress: attempt > 1 ? 5 : 3,
+        message: attempt > 1 ? `Retrying download (${attempt}/${MAX_RETRIES})...` : 'Starting download...',
+        phase: 'preparing',
+      });
+
       const result = await executeDownload(url, formatId, tempFile, currentCookiePath, {
         ext: outputExt,
         hasVideo,
-        needsMerge,
+        needsMerge: formatId.includes('+'),
         downloadId,
         clientDownloadId,
+        attempt,
       });
 
       if (result.success) {
-        // Success! Stream file to client
         console.log(`[Download ${downloadId}] Success on attempt ${attempt}`);
 
         updateProgress(clientDownloadId, {
           progress: 95,
-          message: 'Preparing file...',
+          message: 'Preparing file for transfer...',
           phase: 'processing',
         });
 
-        // Log success
         try {
           await addHistoryEntry({
             url,
@@ -487,12 +651,10 @@ export async function POST(request: NextRequest): Promise<Response> {
           console.error('Failed to log history:', e);
         }
 
-        // Read and stream file
         const fileBuffer = fs.readFileSync(tempFile);
         const filename = sanitizeForHeader(`${sanitizeFilename(title)}.${outputExt}`);
         const contentType = getContentType(outputExt, hasVideo);
 
-        // Cleanup temp file
         deleteTempFile(tempFile);
 
         updateProgress(clientDownloadId, {
@@ -503,57 +665,64 @@ export async function POST(request: NextRequest): Promise<Response> {
           fileReady: true,
         });
 
-        console.log(`[Download ${downloadId}] Sending ${fileBuffer.length} bytes`);
+        console.log(`[Download ${downloadId}] Sending ${formatBytes(fileBuffer.length)}`);
 
-        return new Response(fileBuffer, {
-          status: 200,
-          headers: {
-            'Content-Type': contentType,
-            'Content-Disposition': `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
-            'Content-Length': fileBuffer.length.toString(),
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-            'X-Download-Filename': filename,
-            'X-Download-Id': clientDownloadId,
-          },
-        });
+        const headers: Record<string, string> = {
+          'Content-Type': contentType,
+          'Content-Disposition': `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+          'Content-Length': fileBuffer.length.toString(),
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'X-Download-Filename': filename,
+          'X-Download-Id': clientDownloadId,
+        };
+        
+        if (usedFallback) {
+          headers['X-Used-Fallback-Format'] = 'true';
+        }
+
+        return new Response(fileBuffer, { status: 200, headers });
       }
 
-      // Handle failure
       lastError = result.error || 'Unknown error';
       lastIsBotDetection = result.isBotDetection || false;
+      lastIsCorruption = result.isCorruption || false;
 
       console.log(`[Download ${downloadId}] Attempt ${attempt} failed: ${lastError}`);
 
-      // With auto-cookies, we simply fetch fresh cookies on next attempt
-      // No need to mark cookies as problematic since they're fetched on-demand
+      if (lastIsBotDetection || lastError.includes('403') || lastError.includes('429')) {
+        invalidateCookiesCache();
+      }
 
-      // Delete incomplete temp file before retry
       deleteTempFile(tempFile);
       tempFile = getTempFilePath(outputExt);
 
-      // Don't retry if it's not a bot detection error (e.g., video unavailable)
-      if (!lastIsBotDetection && !lastError.includes('Fragment')) {
+      if (!lastIsBotDetection && !lastIsCorruption && !result.isTimeout) {
         break;
       }
     }
 
-    // All retries failed
-    console.error(`[Download ${downloadId}] All ${MAX_RETRIES} attempts failed`);
+    console.error(`[Download ${downloadId}] All attempts failed`);
+
+    let userError = lastError;
+    if (lastIsCorruption) {
+      userError = 'Video file was corrupted during download. Please try a lower quality format.';
+    } else if (lastIsBotDetection) {
+      userError = 'YouTube blocked the request. Please try again later.';
+    }
 
     updateProgress(clientDownloadId, {
       progress: 0,
-      message: lastError,
+      message: userError,
       phase: 'error',
-      error: lastError,
+      error: userError,
       completed: false,
     });
 
-    // Log failure
     try {
       await addHistoryEntry({
         url,
         title: title || 'Download Failed',
-        format: formatId,
+        format: requestedFormatId,
         ip,
         userAgent: request.headers.get('user-agent') || undefined,
         success: false,
@@ -563,17 +732,19 @@ export async function POST(request: NextRequest): Promise<Response> {
       console.error('Failed to log history:', e);
     }
 
-    // Cleanup
     deleteTempFile(tempFile);
-    await cleanupTempCookies(currentCookiePath);
 
     return NextResponse.json(
       { 
         success: false, 
-        error: lastIsBotDetection 
-          ? 'YouTube blocked the request. The auto-cookies system will retry with fresh cookies.' 
-          : lastError,
+        error: userError,
         isBotDetection: lastIsBotDetection,
+        isCorruption: lastIsCorruption,
+        suggestion: lastIsCorruption 
+          ? 'Try selecting a lower quality format (720p or below)' 
+          : lastIsBotDetection 
+            ? 'Try again in a few minutes' 
+            : undefined,
       },
       { status: lastIsBotDetection ? 403 : 500 }
     );
@@ -581,24 +752,20 @@ export async function POST(request: NextRequest): Promise<Response> {
   } catch (error: any) {
     console.error(`[Download ${downloadId}] Unhandled error:`, error);
     
-    // Cleanup
     deleteTempFile(tempFile);
-    await cleanupTempCookies(currentCookiePath);
     activeDownloads.delete(downloadId);
 
     return NextResponse.json(
       { success: false, error: 'Server error: ' + (error.message || 'Unknown') },
       { status: 500 }
     );
-  } finally {
-    // Always cleanup temp cookies
-    await cleanupTempCookies(currentCookiePath);
   }
 }
 
-// Cleanup on process exit
+// Cleanup on exit
 process.on('SIGTERM', () => {
-  activeDownloads.forEach(({ process, tempFile, tempCookie }) => {
+  activeDownloads.forEach(({ process, tempFile, tempCookie, timeoutController }) => {
+    if (timeoutController) timeoutController.abort();
     if (process) process.kill('SIGTERM');
     deleteTempFile(tempFile);
     deleteTempFile(tempCookie);

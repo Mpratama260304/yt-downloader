@@ -1,6 +1,6 @@
-# 🎬 YouTube Downloader v5.0 - Auto-Cookies Edition
+# 🎬 YouTube Downloader v5.1.0 - Corruption Fix Update
 
-A modern, production-ready web application for downloading YouTube videos using yt-dlp. Features **automatic real-time cookie fetching** from an external URL, eliminating manual cookie management for long-term bot bypass without intervention.
+A modern, production-ready web application for downloading YouTube videos using yt-dlp. Features **automatic real-time cookie fetching** from an external URL, **FFprobe validation** for download integrity, and **auto-fallback formats** to prevent corruption errors.
 
 **🚀 Designed for Phala Cloud and VPS platforms that only support `docker-compose.yml`**
 
@@ -12,16 +12,32 @@ A modern, production-ready web application for downloading YouTube videos using 
 ![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker)
 ![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
 
-## ✨ What's New in v5.0
+## ✨ What's New in v5.1.0
 
-### 🍪 Auto-Cookies System (Major Update)
-- **Real-time Cookie Sync** - Fetches fresh cookies from external URL on every request
-- **No Manual Management** - Removed cookies importer/manager from admin panel
+### 🛡️ Corruption Fix Update (Critical)
+This update addresses frequent "Video file may be corrupted" errors and long "Connecting to server..." delays.
+
+#### Problem Solved
+- **Corruption errors** when downloading "Best Quality (Video + Audio)" formats
+- **Long connection delays** ending in timeout or corruption errors
+- **Incomplete merges** of video and audio streams
+
+#### Solutions Implemented
+- **FFprobe Validation** - Every downloaded file is validated for playability before delivery
+- **Auto-Fallback Formats** - If corruption is detected, automatically retries with safer formats (720p → 480p → best)
+- **Cookies Caching** - 30-second cache reduces external URL calls for faster subsequent requests
+- **Optimized yt-dlp Args** - Increased retries, better FFmpeg flags, socket timeouts
+- **Enhanced Timeout Handling** - 30s connection timeout, 5min download timeout with proper cleanup
+- **Granular Progress Updates** - New "Validating" phase shows when integrity check is running
+
+### 🍪 Auto-Cookies System (v5.0)
+- **Real-time Cookie Sync** - Fetches fresh cookies from external URL
+- **Smart Caching** - 30-second TTL cache for faster requests
 - **Auto-Refresh** - External source refreshes cookies every ~30 seconds
 - **Smart Fallback** - Uses consent cookies if fetch fails
 - **Zero Maintenance** - No need to manually upload/rotate cookies
 
-### Removed Features
+### Removed Features (from v5.0)
 - ❌ Cookies Importer page
 - ❌ Cookies Manager page
 - ❌ LED indicators for cookie status
@@ -45,7 +61,7 @@ A modern, production-ready web application for downloading YouTube videos using 
 - 📱 **YouTube Shorts** - Full support for YouTube Shorts
 - 🎵 **YouTube Music** - Download from YouTube Music
 - 📏 **File Size Display** - Shows estimated file size for each format
-- ⬇️ **Progress Tracking** - Real-time download progress via SSE
+- ⬇️ **Progress Tracking** - Real-time download progress via SSE with validation phase
 
 ### 2025 Bot Detection Fixes
 - 🍪 **Auto-Fetch Cookies** - Fresh cookies from external URL for every request
@@ -156,9 +172,89 @@ If cookie fetch fails (timeout, network error, invalid format):
 ### ⚠️ Important Considerations
 
 1. **External Dependency** - If the cookies URL is unavailable, fallback cookies may trigger bot detection
-2. **No Caching** - Cookies are fetched fresh for every request (ensures real-time sync)
+2. **Caching** - v5.1.0 caches cookies for 30 seconds to reduce external calls (configurable)
 3. **Timeout** - 5-second timeout for fetch to prevent blocking
 4. **Monitoring** - Watch dashboard stats for failed fetches
+
+## 🛡️ Corruption Fix (v5.1.0)
+
+### How FFprobe Validation Works
+
+After every download completes, the file is validated using FFprobe:
+
+```
+┌─────────────────┐     Download Complete     ┌─────────────────┐
+│   yt-dlp        │ ────────────────────────► │   FFprobe       │
+│   Download      │                           │   Validation    │
+└─────────────────┘                           └────────┬────────┘
+                                                       │
+                              ┌────────────────────────┴────────────────────────┐
+                              │                                                 │
+                              ▼                                                 ▼
+                     ┌────────────────┐                              ┌────────────────┐
+                     │   ✅ Valid      │                              │   ❌ Corrupt    │
+                     │   Has video &   │                              │   Missing       │
+                     │   audio streams │                              │   streams       │
+                     └────────┬───────┘                              └────────┬───────┘
+                              │                                               │
+                              ▼                                               ▼
+                     ┌────────────────┐                              ┌────────────────┐
+                     │   Send to      │                              │   Auto-retry   │
+                     │   Client       │                              │   with fallback│
+                     └────────────────┘                              │   format       │
+                                                                     └────────────────┘
+```
+
+### FFprobe Checks
+
+1. **File exists** and is larger than 1KB
+2. **Exit code 0** - FFprobe can read the file
+3. **Has streams** - At least one video or audio stream detected
+4. **Duration > 0** - File has playable content
+
+### Fallback Format Order
+
+When corruption is detected, automatic retry with safer formats:
+
+| Attempt | Format | Description |
+|---------|--------|-------------|
+| 1 | Original | User's selected format |
+| 2 | `best[height<=720]` | 720p max (stable) |
+| 3 | `best[height<=480]` | 480p max (very stable) |
+| 4+ | `best` | Any available format |
+
+### Optimized yt-dlp Arguments
+
+```bash
+# Stability improvements in v5.1.0
+--retries 15               # Increased from 10
+--fragment-retries 15      # Increased from 10
+--socket-timeout 10        # Faster failure detection
+--http-chunk-size 10M      # Optimal chunk size
+--embed-metadata           # Better compatibility
+--postprocessor-args "ffmpeg:-c:v copy -c:a aac -movflags +faststart"
+```
+
+### Testing FFprobe Locally
+
+```bash
+# Check if ffprobe is available
+ffprobe -version
+
+# Validate a downloaded file
+ffprobe -v error -show_format -show_streams video.mp4
+
+# Should show format info and streams (video/audio)
+# Exit code 0 = valid, non-zero = corrupt
+```
+
+### Environment Variables for Tuning
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `COOKIES_CACHE_TTL` | `30000` | Cookies cache duration (ms) |
+| `DOWNLOAD_TIMEOUT` | `300000` | Max download time (5 min) |
+| `CONNECT_TIMEOUT` | `30000` | Initial connection timeout (30s) |
 
 ## 🔄 Proxy Download Feature
 

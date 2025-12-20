@@ -2,7 +2,7 @@
 
 import { useState, useMemo, forwardRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { FiVideo, FiMusic, FiFilter, FiCheck } from 'react-icons/fi';
+import { FiVideo, FiMusic, FiFilter, FiCheck, FiAlertTriangle, FiInfo } from 'react-icons/fi';
 import type { VideoFormat } from '@/lib/types';
 import clsx from 'clsx';
 
@@ -86,9 +86,14 @@ export default function FormatSelector({ formats, onSelect, selectedFormat }: Fo
         {/* Recommended formats */}
         {recommendedFormats.length > 0 && (
           <div className="mb-6">
-            <h4 className="text-sm font-semibold text-base-content/60 mb-3 uppercase tracking-wide">
-              Recommended
-            </h4>
+            <div className="flex items-center gap-2 mb-3">
+              <h4 className="text-sm font-semibold text-base-content/60 uppercase tracking-wide">
+                Recommended
+              </h4>
+              <div className="tooltip tooltip-right" data-tip="Best Quality merges video+audio. May take longer; auto-fallback if issues detected.">
+                <FiInfo className="w-3.5 h-3.5 text-base-content/40 cursor-help" />
+              </div>
+            </div>
             <div className="grid gap-2">
               <AnimatePresence mode="popLayout">
                 {recommendedFormats.map((format, index) => (
@@ -205,13 +210,23 @@ const FormatCard = forwardRef<HTMLDivElement, FormatCardProps>(
 
         {/* Format info */}
         <div className="flex-1 min-w-0">
-          <div className="font-medium truncate text-sm sm:text-base">
+          <div className="font-medium truncate text-sm sm:text-base flex items-center gap-1">
             {format.quality}
+            {/* Warning for Best Quality formats */}
+            {(format.formatId.includes('+') || format.formatId.includes('best')) && format.hasVideo && (
+              <div className="tooltip tooltip-top" data-tip="May take longer; auto-fallback if corrupt">
+                <FiAlertTriangle className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-warning" />
+              </div>
+            )}
           </div>
           <div className="text-[10px] sm:text-xs text-base-content/60 flex items-center gap-1 sm:gap-2 flex-wrap">
             <span className="badge badge-xs">{format.ext.toUpperCase()}</span>
             {format.vbr && <span>{formatBitrate(format.vbr)}</span>}
             {!format.vbr && format.abr && <span>{formatBitrate(format.abr)}</span>}
+            {/* Merge indicator */}
+            {format.formatId.includes('+') && (
+              <span className="badge badge-xs badge-warning badge-outline">merge</span>
+            )}
           </div>
         </div>
 
