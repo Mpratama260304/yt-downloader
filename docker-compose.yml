@@ -1,0 +1,205 @@
+# ===========================================
+# Docker Compose for YouTube Downloader v5.0
+# ===========================================
+#
+# 🚀 PHALA CLOUD & VPS DEPLOYMENT READY
+#
+# v5.0 MAJOR CHANGES:
+# - Auto-fetch cookies from external URL (no manual management)
+# - Removed cookies importer/manager features
+# - Real-time cookie sync every ~30 seconds
+# - Smart fallback to consent cookies
+#
+# v4.3 FIXES (retained):
+# - Fixed "Deprecated: Passing cookies as header" warning
+# - Fixed "No such file: FragXX" errors (removed concurrent fragments)
+# - ffmpeg required for video+audio merge (included in image)
+# - Proper temp file handling
+#
+# ⚠️  IMPORTANT: PRE-BUILT IMAGE REQUIRED!
+# ⚠️  Phala Cloud does NOT support building from Dockerfile.
+# ⚠️  You MUST build and push the image to Docker Hub first!
+#
+# This file contains ALL configuration needed.
+# NO .env file required - all settings are inline.
+#
+# ===========================================
+# DEPLOYMENT STEPS:
+# ===========================================
+#
+# Step 1: Build and push image to Docker Hub (on your local machine):
+#   docker build -t mpratamamail/yt-downloader:latest .
+#   docker login
+#   docker push mpratamamail/yt-downloader:latest
+#
+# Step 2: Update 'image:' below with your Docker Hub username
+#
+# Step 3: Upload this docker-compose.yml to Phala Cloud
+#
+# Step 4: Deploy! Phala Cloud will pull the pre-built image.
+#
+# ===========================================
+# LOCAL USAGE (with build):
+# ===========================================
+#   docker build -t mpratamamail/yt-downloader:latest .
+#   docker-compose up -d
+#   docker-compose logs -f
+#   docker-compose down
+#
+# ===========================================
+
+version: '3.8'
+
+services:
+  app:
+    # ===========================================
+    # Docker Hub Image: mpratamamail/yt-downloader
+    # ===========================================
+    # DO NOT use 'build:' section - Phala Cloud does not support it!
+    # The 'build:' directive causes "failed to read dockerfile" error.
+    # ===========================================
+    image: mpratamamail/yt-downloader:latest
+    
+    container_name: app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    
+    # ===========================================
+    # ENVIRONMENT VARIABLES
+    # ===========================================
+    # All config is set here - no .env file needed!
+    # ===========================================
+    environment:
+      # REQUIRED: Production settings
+      - NODE_ENV=production
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
+      
+      # ===========================================
+      # REQUIRED: Set to your actual Phala Cloud URL!
+      # ===========================================
+      # For Phala Cloud: https://your-app-id.dstack.phala.network
+      # For local testing: http://localhost:3000
+      # ===========================================
+      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+      
+      # ===========================================
+      # ADMIN PANEL SETTINGS
+      # ===========================================
+      # JWT_SECRET: Secret key for admin session tokens
+      # Change this in production!
+      # ===========================================
+      - JWT_SECRET=${JWT_SECRET:-your-secret-key-change-in-production}
+      
+      # Database path (inside /data volume)
+      - DATABASE_PATH=/data/app.db
+      
+      # ===========================================
+      # AUTO-COOKIES SYSTEM (v5.0)
+      # ===========================================
+      # External URL that serves fresh cookies.txt (Netscape format)
+      # The URL should refresh cookies every ~30 seconds
+      # Set to your own cookies server URL if available
+      # ===========================================
+      - COOKIES_URL=${COOKIES_URL:-https://amy-subjective-macro-powers.trycloudflare.com/}
+      
+      # Uploads directory for logo/favicon
+      - UPLOADS_DIR=/data/uploads
+      
+      # Disable Next.js telemetry
+      - NEXT_TELEMETRY_DISABLED=1
+      
+      # Timezone (optional)
+      - TZ=UTC
+      
+      # ===========================================
+      # OPTIONAL: Uncomment to customize
+      # ===========================================
+      
+      # Rate limiting (requests per window)
+      # - RATE_LIMIT=20
+      # - RATE_WINDOW=60000
+      
+      # Logging level: debug, info, warn, error
+      # - LOG_LEVEL=info
+      
+      # Custom yt-dlp binary path (rarely needed)
+      # - YTDLP_PATH=/custom/path/to/yt-dlp
+
+    volumes:
+      # ===========================================
+      # PERSISTENT DATA VOLUME
+      # ===========================================
+      # Contains: SQLite database, cookies, uploads
+      # IMPORTANT: Use a named volume for Phala Cloud
+      # ===========================================
+      - yt-downloader-data:/data
+      
+      # Legacy volumes (for backward compatibility)
+      - ./tmp:/app/tmp
+      - ./logs:/app/logs
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+    networks:
+      - youtube-downloader-network
+
+    # ===========================================
+    # RESOURCE LIMITS (recommended for Phala Cloud)
+    # ===========================================
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ===========================================
+  # OPTIONAL: Nginx reverse proxy for HTTPS
+  # ===========================================
+  # Note: Phala Cloud provides HTTPS automatically.
+  # Only uncomment for self-hosted deployments.
+  # ===========================================
+  # nginx:
+  #   image: nginx:alpine
+  #   container_name: youtube-downloader-nginx
+  #   restart: unless-stopped
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+  #     - ./nginx/ssl:/etc/nginx/ssl:ro
+  #   depends_on:
+  #     app:
+  #       condition: service_healthy
+  #   networks:
+  #     - youtube-downloader-network
+
+networks:
+  youtube-downloader-network:
+    name: youtube-downloader-net
+    driver: bridge
+
+# ===========================================
+# NAMED VOLUMES
+# ===========================================
+# yt-downloader-data: Persistent data (database, cookies, uploads)
+# ===========================================
+volumes:
+  yt-downloader-data:
+    name: yt-downloader-data

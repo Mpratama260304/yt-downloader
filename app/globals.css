@@ -1,0 +1,287 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================
+   YouTube Downloader - Production Styles
+   Mobile-First Responsive Design
+   ============================================ */
+
+@layer base {
+  :root {
+    --foreground-rgb: 0, 0, 0;
+    --background-start-rgb: 249, 250, 251;
+    --background-end-rgb: 243, 244, 246;
+    /* Touch-friendly minimum sizes */
+    --touch-target-min: 44px;
+    --spacing-mobile: 1rem;
+    --spacing-tablet: 1.5rem;
+    --spacing-desktop: 2rem;
+  }
+
+  [data-theme="dark"] {
+    --foreground-rgb: 249, 250, 251;
+    --background-start-rgb: 31, 41, 55;
+    --background-end-rgb: 17, 24, 39;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    -webkit-tap-highlight-color: transparent;
+    /* Prevent iOS font scaling */
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    color: rgb(var(--foreground-rgb));
+    background: linear-gradient(
+      135deg,
+      rgb(var(--background-start-rgb)),
+      rgb(var(--background-end-rgb))
+    );
+    min-height: 100vh;
+    min-height: 100dvh; /* Dynamic viewport height for mobile */
+    font-feature-settings: "rlig" 1, "calt" 1;
+    /* Improve text rendering */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    /* Prevent horizontal scroll on mobile */
+    overflow-x: hidden;
+  }
+
+  /* Typography improvements - responsive */
+  h1, h2, h3, h4, h5, h6 {
+    text-wrap: balance;
+    line-height: 1.2;
+  }
+
+  p {
+    text-wrap: pretty;
+    line-height: 1.6;
+  }
+
+  /* Touch-friendly interactive elements */
+  button, 
+  a, 
+  input, 
+  select, 
+  textarea,
+  [role="button"] {
+    min-height: var(--touch-target-min);
+  }
+}
+
+@layer components {
+  /* Hero gradient background */
+  .hero-gradient {
+    background: linear-gradient(
+      135deg,
+      hsl(var(--p) / 0.1) 0%,
+      transparent 50%,
+      hsl(var(--s) / 0.1) 100%
+    );
+  }
+
+  /* Glass morphism card - mobile optimized */
+  .glass-card {
+    @apply bg-base-100/80 backdrop-blur-lg border border-base-content/10 shadow-xl rounded-xl;
+  }
+
+  /* Glow effects - reduced on mobile for performance */
+  .glow-primary {
+    box-shadow: 0 0 20px hsl(var(--p) / 0.3);
+  }
+
+  @media (max-width: 640px) {
+    .glow-primary {
+      box-shadow: 0 0 10px hsl(var(--p) / 0.2);
+    }
+  }
+
+  .glow-primary-hover:hover {
+    box-shadow: 0 0 30px hsl(var(--p) / 0.4);
+  }
+
+  /* Animated gradient border */
+  .gradient-border {
+    position: relative;
+    background: linear-gradient(var(--b1), var(--b1)) padding-box,
+                linear-gradient(135deg, hsl(var(--p)), hsl(var(--s))) border-box;
+    border: 2px solid transparent;
+  }
+
+  /* YouTube red accent */
+  .youtube-accent {
+    @apply text-primary hover:text-primary/80 transition-colors;
+  }
+
+  /* Feature card hover effect - touch-friendly */
+  .feature-card {
+    @apply card bg-base-100 shadow-md transition-all duration-300 rounded-xl;
+  }
+
+  .feature-card:hover {
+    @apply shadow-xl -translate-y-1;
+  }
+
+  /* Touch-friendly on mobile (no hover effects) */
+  @media (hover: none) {
+    .feature-card:hover {
+      @apply shadow-md translate-y-0;
+    }
+    .feature-card:active {
+      @apply shadow-lg scale-[0.98];
+    }
+  }
+
+  /* Skeleton loading */
+  .skeleton-pulse {
+    @apply animate-pulse bg-base-300 rounded;
+  }
+
+  /* Progress bar */
+  .progress-gradient {
+    background: linear-gradient(90deg, hsl(var(--p)), hsl(var(--s)));
+  }
+
+  /* Mobile-friendly card padding */
+  .card-mobile {
+    @apply p-3 sm:p-4 md:p-6;
+  }
+
+  /* Mobile-optimized table */
+  .table-mobile {
+    @apply w-full;
+  }
+
+  .table-mobile th,
+  .table-mobile td {
+    @apply px-2 py-3 sm:px-4 sm:py-4;
+  }
+
+  /* Mobile card list (alternative to tables) */
+  .card-list-item {
+    @apply p-4 bg-base-100 rounded-xl border border-base-200 mb-2;
+  }
+
+  /* Touch-friendly buttons */
+  .btn-touch {
+    @apply min-h-[44px] min-w-[44px] px-4;
+  }
+
+  /* Safe area padding for notched devices */
+  .safe-area-inset {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* Admin sidebar mobile offset */
+  .admin-content {
+    @apply pt-16 lg:pt-0;
+  }
+
+  /* Responsive container */
+  .container-responsive {
+    @apply px-3 sm:px-4 md:px-6 lg:px-8 max-w-7xl mx-auto;
+  }
+}
+
+@layer utilities {
+  /* Custom scrollbar */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--bc) / 0.2) transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+    border-radius: 4px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: hsl(var(--bc) / 0.2);
+    border-radius: 4px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--bc) / 0.3);
+  }
+
+  /* Line clamp utilities */
+  .line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .line-clamp-3 {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  /* Text gradient */
+  .text-gradient {
+    @apply bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent;
+  }
+
+  /* Animation delays */
+  .animation-delay-100 {
+    animation-delay: 100ms;
+  }
+  .animation-delay-200 {
+    animation-delay: 200ms;
+  }
+  .animation-delay-300 {
+    animation-delay: 300ms;
+  }
+  .animation-delay-500 {
+    animation-delay: 500ms;
+  }
+
+  /* Focus visible styles */
+  .focus-ring {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-base-100;
+  }
+}
+
+/* Smooth transitions for all interactive elements */
+* {
+  @apply transition-colors duration-200;
+}
+
+/* Focus styles */
+button:focus-visible,
+input:focus-visible,
+a:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  @apply outline-none ring-2 ring-primary ring-offset-2 ring-offset-base-100;
+}
+
+/* Reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Print styles */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+}
