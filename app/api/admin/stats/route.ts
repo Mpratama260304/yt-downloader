@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
 import { getAllSettings, getHistory, getHistoryCount } from '@/lib/db';
-import { getAutoCookiesStats, getCookiesUrl, isAutoCookiesEnabled } from '@/lib/auto-cookies';
+import { getAutoCookiesStats, getCookiesUrl, isAutoCookiesEnabled, getCookiesUrlAsync } from '@/lib/auto-cookies';
 import type { HistoryEntry } from '@/lib/db/schema';
 
 export async function GET() {
@@ -21,6 +21,7 @@ export async function GET() {
     
     // Get auto-cookies stats (v5.0)
     const autoCookiesStats = getAutoCookiesStats();
+    const cookiesUrl = await getCookiesUrlAsync();
 
     const historyStats = {
       total: historyCount,
@@ -33,7 +34,7 @@ export async function GET() {
       data: {
         autoCookies: {
           enabled: isAutoCookiesEnabled(),
-          url: getCookiesUrl(),
+          url: cookiesUrl,
           lastFetch: autoCookiesStats.lastFetchTime 
             ? new Date(autoCookiesStats.lastFetchTime).toISOString() 
             : null,

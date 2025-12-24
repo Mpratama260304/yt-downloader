@@ -21,6 +21,7 @@ export async function GET() {
         site_description: settings.site_description || '',
         logo_path: settings.logo_path || '/icon.svg',
         favicon_path: settings.favicon_path || '/favicon.ico',
+        cookies_url: settings.cookies_url || '',
       },
     });
   } catch (error) {
@@ -43,7 +44,7 @@ export async function PUT(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { site_name, site_description, logo_path, favicon_path } = body;
+    const { site_name, site_description, logo_path, favicon_path, cookies_url } = body;
 
     // Update settings
     if (site_name !== undefined) {
@@ -57,6 +58,56 @@ export async function PUT(request: NextRequest) {
     }
     if (favicon_path !== undefined) {
       await setSetting('favicon_path', favicon_path);
+    }
+    if (cookies_url !== undefined) {
+      await setSetting('cookies_url', cookies_url);
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: 'Settings updated',
+    });
+  } catch (error) {
+    console.error('[Admin] Settings update error:', error);
+    return NextResponse.json(
+      { success: false, error: 'Failed to update settings' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const session = await getSession();
+    if (!session) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized' },
+        { status: 401 }
+      );
+    }
+
+    const body = await request.json();
+    const { site_name, site_description, logo_path, favicon_path, cookiesUrl, cookies_url } = body;
+
+    // Update settings
+    if (site_name !== undefined) {
+      await setSetting('site_name', site_name);
+    }
+    if (site_description !== undefined) {
+      await setSetting('site_description', site_description);
+    }
+    if (logo_path !== undefined) {
+      await setSetting('logo_path', logo_path);
+    }
+    if (favicon_path !== undefined) {
+      await setSetting('favicon_path', favicon_path);
+    }
+    // Accept both cookiesUrl (camelCase) and cookies_url (snake_case)
+    if (cookiesUrl !== undefined) {
+      await setSetting('cookies_url', cookiesUrl);
+    }
+    if (cookies_url !== undefined) {
+      await setSetting('cookies_url', cookies_url);
     }
 
     return NextResponse.json({

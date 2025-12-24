@@ -214,11 +214,14 @@ export async function fetchFreshCookies(): Promise<CookiesFetchResult> {
   stats.totalFetches++;
   stats.lastFetchTime = Date.now();
   
-  console.log('[AutoCookies] Fetching fresh cookies from:', COOKIES_URL);
+  // Get cookies URL from database or env
+  const cookiesUrl = await getCookiesUrlAsync();
+  
+  console.log('[AutoCookies] Fetching fresh cookies from:', cookiesUrl);
   
   try {
     // Fetch cookies from external URL with timeout
-    const response = await axios.get(COOKIES_URL, {
+    const response = await axios.get(cookiesUrl, {
       timeout: FETCH_TIMEOUT,
       responseType: 'text',
       headers: {
@@ -388,7 +391,41 @@ export function isAutoCookiesEnabled(): boolean {
 
 /**
  * Get the configured cookies URL (for admin dashboard display)
+ * Tries to load from database first, falls back to env variable
  */
 export function getCookiesUrl(): string {
   return COOKIES_URL;
+}
+
+/**
+ * Get the configured cookies URL with database fallback
+ * This is async and should be used for actual cookie fetching
+ */
+export async function getCookiesUrlAsync(): Promise<string> {
+  try {
+    // Try to get from database first
+    const { getSetting } = await import('@/lib/db');
+    const dbUrl = await getSetting('cookies_url');
+    if (dbUrl && dbUrl.trim()) {
+      return dbUrl.trim();
+    }
+  } catch (error) {
+    // If database access fails, fall through to env variable
+    console.warn('[AutoCookies] Failed to fetch cookies_url from database:', error);
+  }
+  
+  return COOKIES_URL;
+}
+
+/**
+ * Set the cookies URL in the database
+ */
+export async function setCookiesUrl(url: string): Promise<void> {
+  try {
+    const { setSetting } = await import('@/lib/db');
+    await setSetting('cookies_url', url.trim());
+  } catch (error) {
+    console.error('[AutoCookies] Failed to set cookies_url in database:', error);
+    throw error;
+  }
 }
