@@ -39,6 +39,9 @@ interface DashboardStats {
 export default function AdminDashboardPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isEditingUrl, setIsEditingUrl] = useState(false);
+  const [editUrl, setEditUrl] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     fetchStats();
@@ -50,11 +53,52 @@ export default function AdminDashboardPage() {
       const data = await response.json();
       if (data.success) {
         setStats(data.data);
+        setEditUrl(data.data.autoCookies.url || '');
       }
     } catch (error) {
       console.error('Failed to fetch stats:', error);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleEditUrl = () => {
+    setEditUrl(stats?.autoCookies.url || '');
+    setIsEditingUrl(true);
+  };
+
+  const handleCancelEdit = () => {
+    setIsEditingUrl(false);
+    setEditUrl('');
+  };
+
+  const handleSaveUrl = async () => {
+    if (!editUrl.trim()) {
+      alert('URL cannot be empty');
+      return;
+    }
+
+    try {
+      setIsSaving(true);
+      const response = await fetch('/api/admin/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cookiesUrl: editUrl.trim() }),
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        setStats((prev) => prev ? { ...prev, autoCookies: { ...prev.autoCookies, url: editUrl.trim() } } : null);
+        setIsEditingUrl(false);
+        alert('Cookies URL updated successfully');
+      } else {
+        alert('Failed to update URL: ' + (data.message || 'Unknown error'));
+      }
+    } catch (error) {
+      console.error('Failed to save URL:', error);
+      alert('Failed to save URL');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -142,10 +186,52 @@ export default function AdminDashboardPage() {
             </div>
 
             <div className="mt-4 pt-4 border-t border-base-200">
-              <p className="text-xs text-base-content/60">Cookies URL:</p>
-              <p className="text-sm font-mono bg-base-200/50 rounded px-2 py-1 mt-1 truncate">
-                {stats?.autoCookies.url || 'Not configured'}
-              </p>
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <p className="text-xs text-base-content/60">Cookies URL:</p>
+                {!isEditingUrl && (
+                  <button
+                    onClick={handleEditUrl}
+                    className="btn btn-xs btn-ghost text-primary hover:bg-primary/10"
+                  >
+                    Edit
+                  </button>
+                )}
+              </div>
+              {isEditingUrl ? (
+                <div className="space-y-2">
+                  <input
+                    type="url"
+                    value={editUrl}
+                    onChange={(e) => setEditUrl(e.target.value)}
+                    placeholder="https://example.com"
+                    className="input input-bordered input-sm w-full text-sm"
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleSaveUrl}
+                      disabled={isSaving}
+                      className="btn btn-success btn-sm flex-1"
+                    >
+                      {isSaving ? (
+                        <span className="loading loading-spinner loading-xs"></span>
+                      ) : (
+                        'Save'
+                      )}
+                    </button>
+                    <button
+                      onClick={handleCancelEdit}
+                      disabled={isSaving}
+                      className="btn btn-ghost btn-sm flex-1"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm font-mono bg-base-200/50 rounded px-2 py-1 mt-1 break-all">
+                  {stats?.autoCookies.url || 'Not configured'}
+                </p>
+              )}
             </div>
           </div>
         </div>
